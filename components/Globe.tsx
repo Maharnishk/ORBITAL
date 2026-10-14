@@ -1,8 +1,9 @@
 'use client';
 import { OrbitControls } from '@react-three/drei';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { sourceById } from '@/lib/data';
 import type { ThreatEvent } from '@/lib/types';
 import { latLonToVec3 } from '@/lib/utils';
 
@@ -14,7 +15,10 @@ const SEV_COLOR: Record<string, string> = {
   critical: '#E77C72',
 };
 
+const SEV_ORDER = ['info', 'low', 'medium', 'high', 'critical'] as const;
+
 const R = 1;
+const CAMERA_HOME: [number, number, number] = [0, 0.6, 3.2];
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -52,6 +56,7 @@ function Graticule() {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     return g;
   }, []);
+  useEffect(() => () => geom.dispose(), [geom]);
   return (
     <lineSegments geometry={geom}>
       <lineBasicMaterial color="#2c332d" transparent opacity={0.85} />
@@ -73,6 +78,7 @@ function Speckle({ count = 1400 }: { count?: number }) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     return g;
   }, [count]);
+  useEffect(() => () => geom.dispose(), [geom]);
   return (
     <points geometry={geom}>
       <pointsMaterial color="#232a24" size={0.006} sizeAttenuation transparent opacity={0.9} />
@@ -80,7 +86,7 @@ function Speckle({ count = 1400 }: { count?: number }) {
   );
 }
 
-function Arc({ from, to, color, animated }: { from: [number, number, number]; to: [number, number, number]; color: string; animated: boolean }) {
+const Arc = memo(function Arc({ from, to, color, animated }: { from: [number, number, number]; to: [number, number, number]; color: string; animated: boolean }) {
   const curve = useMemo(() => {
     const a = new THREE.Vector3(...from);
     const b = new THREE.Vector3(...to);
@@ -92,6 +98,13 @@ function Arc({ from, to, color, animated }: { from: [number, number, number]; to
     const g = new THREE.BufferGeometry().setFromPoints(curve.getPoints(48));
     return new THREE.Line(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.55 }));
   }, [curve, color]);
+  useEffect(
+    () => () => {
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    },
+    [line]
+  );
   const dot = useRef<THREE.Mesh>(null);
   useFrame(({ clock }) => {
     if (!animated || !dot.current) return;
@@ -109,15 +122,39 @@ function Arc({ from, to, color, animated }: { from: [number, number, number]; to
       )}
     </group>
   );
+});
+
+interface MarkerHover {
+  id: string;
+  x: number;
+  y: number;
 }
 
-function Markers({ events, selectedId, onSelect }: { events: ThreatEvent[]; selectedId: string | null; onSelect: (id: string) => void }) {
+const Markers = memo(function Markers({
+  events, selectedId, onSelect, onHover, onLeave,
+}: {
+  events: ThreatEvent[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onHover: (h: MarkerHover, ev: ThreeEvent<PointerEvent>) => void;
+  onLeave: () => void;
+}) {
+  // Precompute positions once per event list so renders stay cheap.
+  const plotted = useMemo(
+    () =>
+      events.flatMap((e) => {
+        const g = e.dstGeo ?? e.srcGeo;
+        if (!g) return [];
+        // Guard against invalid coordinates; never plot or invent locations.
+        if (!Number.isFinite(g.lat) || !Number.isFinite(g.lon)) return [];
+        if (g.lat < -90 || g.lat > 90 || g.lon < -180 || g.lon > 180) return [];
+        return [{ e, pos: latLonToVec3(g.lat, g.lon, R * 1.01) }];
+      }),
+    [events]
+  );
   return (
     <group>
-      {events.map((e) => {
-        const g = e.dstGeo ?? e.srcGeo;
-        if (!g) return null;
-        const pos = latLonToVec3(g.lat, g.lon, R * 1.01);
+      {plotted.map(({ e, pos }) => {
         const sel = e.id === selectedId;
         return (
           <mesh
@@ -130,9 +167,14 @@ function Markers({ events, selectedId, onSelect }: { events: ThreatEvent[]; sele
             onPointerOver={(ev) => {
               ev.stopPropagation();
               document.body.style.cursor = 'pointer';
+              onHover({ id: e.id, x: ev.nativeEvent.clientX, y: ev.nativeEvent.clientY }, ev);
+            }}
+            onPointerMove={(ev) => {
+              onHover({ id: e.id, x: ev.nativeEvent.clientX, y: ev.nativeEvent.clientY }, ev);
             }}
             onPointerOut={() => {
               document.body.style.cursor = 'auto';
+              onLeave();
             }}
           >
             <sphereGeometry args={[sel ? 0.024 : 0.014, 16, 16]} />
@@ -148,20 +190,24 @@ function Markers({ events, selectedId, onSelect }: { events: ThreatEvent[]; sele
       })}
     </group>
   );
-}
+});
 
 function Scene({
-  events, selectedId, onSelect, showArcs, autoRotate, reduced,
+  events, selectedId, onSelect, onHover, onLeave, showArcs, autoRotate, reduced, controlsRef,
 }: {
   events: ThreatEvent[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onHover: (h: MarkerHover, ev: ThreeEvent<PointerEvent>) => void;
+  onLeave: () => void;
   showArcs: boolean;
   autoRotate: boolean;
   reduced: boolean;
+  controlsRef: React.RefObject<any>;
 }) {
   const arcs = useMemo(() => {
     if (!showArcs) return [];
+    // Only events carrying BOTH reported endpoints produce arcs.
     return events.filter((e) => e.srcGeo && e.dstGeo).slice(0, 36);
   }, [events, showArcs]);
 
@@ -189,8 +235,9 @@ function Scene({
           animated={!reduced}
         />
       ))}
-      <Markers events={events} selectedId={selectedId} onSelect={onSelect} />
+      <Markers events={events} selectedId={selectedId} onSelect={onSelect} onHover={onHover} onLeave={onLeave} />
       <OrbitControls
+        ref={controlsRef}
         enablePan={false}
         minDistance={1.7}
         maxDistance={6}
@@ -223,12 +270,52 @@ export default function GlobePanel({
   const [autoRotate, setAutoRotate] = useState(true);
   const [mounted, setMounted] = useState(false);
   const [noWebgl, setNoWebgl] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const controlsRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const lastPos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     setMounted(true);
     setNoWebgl(!webglAvailable());
   }, []);
 
+  // Position the tooltip via direct DOM writes so pointer movement does not
+  // trigger React rerenders of the Canvas subtree.
+  const placeTooltip = useCallback((clientX: number, clientY: number) => {
+    const box = containerRef.current?.getBoundingClientRect();
+    const tip = tooltipRef.current;
+    if (!box || !tip) return;
+    const x = clientX - box.left;
+    const y = clientY - box.top;
+    const flipX = x > box.width - 240;
+    const flipY = y < 110;
+    tip.style.transform = `translate(${flipX ? x - 216 : x + 14}px, ${flipY ? y + 16 : y - 96}px)`;
+  }, []);
+
+  const handleHover = useCallback(
+    (h: MarkerHover) => {
+      lastPos.current = { x: h.x, y: h.y };
+      setHoveredId((prev) => (prev === h.id ? prev : h.id));
+      placeTooltip(h.x, h.y);
+    },
+    [placeTooltip]
+  );
+
+  // The tooltip element mounts on the first hover of a marker, after
+  // placeTooltip above runs against a null ref — position it on mount.
+  useEffect(() => {
+    if (hoveredId) placeTooltip(lastPos.current.x, lastPos.current.y);
+  }, [hoveredId, placeTooltip]);
+
+  const handleLeave = useCallback(() => setHoveredId(null), []);
+
+  const resetCamera = useCallback(() => {
+    controlsRef.current?.reset?.();
+  }, []);
+
+  const hovered = hoveredId ? events.find((e) => e.id === hoveredId) ?? null : null;
   const geoCount = events.filter((e) => e.srcGeo || e.dstGeo).length;
   const flowCount = events.filter((e) => e.srcGeo && e.dstGeo).length;
 
@@ -251,13 +338,20 @@ export default function GlobePanel({
           >
             Rotate {autoRotate ? 'on' : 'off'}
           </button>
+          <button
+            onClick={resetCamera}
+            className="focus-ring rounded border border-border px-2 py-1 text-[11px] font-mono text-secondary hover:text-primary"
+          >
+            Reset view
+          </button>
         </div>
       </div>
 
       <div
+        ref={containerRef}
         className="relative h-[420px] lg:h-[560px] bg-void"
         role="application"
-        aria-label="Interactive 3D globe. Use the event stream list for full keyboard access to every event."
+        aria-label="Interactive 3D globe. Hover a marker for a summary, click to inspect, or use the event stream list for full keyboard access."
         tabIndex={0}
       >
         {!mounted || noWebgl ? (
@@ -281,26 +375,60 @@ export default function GlobePanel({
         ) : (
           <Suspense fallback={<div className="absolute inset-0 grid place-items-center text-[12px] font-mono text-secondary">Loading globe…</div>}>
             <Canvas
-              camera={{ position: [0, 0.6, 3.2], fov: 42 }}
+              camera={{ position: CAMERA_HOME, fov: 42 }}
               dpr={[1, 2]}
-              gl={{ antialias: true, alpha: false }}
+              gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
               onCreated={({ gl }) => gl.setClearColor('#0A0C0B')}
             >
               <Scene
                 events={events}
                 selectedId={selectedId}
                 onSelect={onSelect}
+                onHover={handleHover}
+                onLeave={handleLeave}
                 showArcs={showArcs}
                 autoRotate={autoRotate}
                 reduced={reduced}
+                controlsRef={controlsRef}
               />
             </Canvas>
           </Suspense>
         )}
 
+        {/* Hover tooltip: indicator, severity, source. Pointer-transparent. */}
+        {hovered && (
+          <div
+            ref={tooltipRef}
+            className="pointer-events-none absolute left-0 top-0 w-52 rounded-md border border-border bg-panel/95 px-2.5 py-2 shadow-lg"
+            style={{ transform: 'translate(-9999px, -9999px)' }}
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: SEV_COLOR[hovered.severity] }} aria-hidden />
+              <span className="text-[10px] font-mono uppercase tracking-[0.12em]" style={{ color: SEV_COLOR[hovered.severity] }}>
+                {hovered.severity}
+              </span>
+              <span className="ml-auto text-[10px] font-mono text-secondary">{hovered.id}</span>
+            </div>
+            <div className="mt-1 font-mono text-[12px] text-phosphor truncate">{hovered.indicator}</div>
+            <div className="mt-0.5 text-[11px] text-secondary truncate">{sourceById(hovered.sourceId).name} · {hovered.type}</div>
+          </div>
+        )}
+        {/* Screen-reader announcement for hovered markers. */}
+        <span aria-live="polite" className="sr-only">
+          {hovered ? `${hovered.indicator}, severity ${hovered.severity}, source ${sourceById(hovered.sourceId).name}` : ''}
+        </span>
+
         <div className="pointer-events-none absolute left-3 bottom-3 rounded border border-border bg-panel/90 px-2.5 py-1.5 text-[10.5px] font-mono text-secondary">
           drag to rotate · scroll to zoom · click a marker
           <span className="block text-primary/80">{geoCount} plotted · {showArcs ? Math.min(36, flowCount) : 0} flows · arcs only when both endpoints reported</span>
+          <span className="mt-1 flex items-center gap-2" aria-label="Severity legend">
+            {SEV_ORDER.map((s) => (
+              <span key={s} className="inline-flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: SEV_COLOR[s] }} aria-hidden />
+                {s}
+              </span>
+            ))}
+          </span>
         </div>
         {selectedId && (
           <div className="absolute right-3 top-3 rounded border border-phosphor/40 bg-panel/95 px-2.5 py-1.5 text-[11px] font-mono">
