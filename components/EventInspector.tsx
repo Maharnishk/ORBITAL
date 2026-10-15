@@ -1,6 +1,7 @@
 'use client';
 import { sourceById } from '@/lib/data';
 import type { ThreatEvent } from '@/lib/types';
+import { DATA_ORIGIN_LABELS, SEVERITY_LABELS, VERIFICATION_LABELS } from '@/lib/types';
 import { formatUtc } from '@/lib/utils';
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, Copy, MapPin } from 'lucide-react';
 import { useState } from 'react';
@@ -20,13 +21,17 @@ interface Props {
   position: string;
 }
 
+function Value({ children }: { children: React.ReactNode }) {
+  return <dd className="font-mono text-[11.5px] mt-0.5 break-words">{children}</dd>;
+}
+
 export default function EventInspector({ event, onPrev, onNext, position }: Props) {
   const [copied, setCopied] = useState(false);
   if (!event) {
     return (
       <section aria-label="Event inspector" className="rounded-lg border border-border bg-panel p-4">
         <h2 className="text-[11px] font-mono tracking-[0.18em] text-secondary">INSPECTOR</h2>
-        <p className="mt-3 text-[13px] text-secondary">Select an event from the stream or the globe to inspect provenance and metadata.</p>
+        <p className="mt-3 text-[13px] text-secondary">No event selected. Select an event from the stream or the globe to inspect provenance and metadata.</p>
       </section>
     );
   }
@@ -53,7 +58,7 @@ export default function EventInspector({ event, onPrev, onNext, position }: Prop
       <div className="p-4 space-y-4">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.12em] ${BADGE[event.severity]}`}>{event.severity}</span>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.12em] ${BADGE[event.severity]}`}>{SEVERITY_LABELS[event.severity] ?? event.severity}</span>
             <span className="text-[10px] font-mono text-secondary">{event.type} · {event.id}</span>
           </div>
           <h3 className="mt-2 text-[15px] font-semibold leading-snug">{event.title}</h3>
@@ -69,7 +74,22 @@ export default function EventInspector({ event, onPrev, onNext, position }: Prop
         </div>
 
         <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-[12px]">
-          <div><dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">OBSERVED</dt><dd className="font-mono text-[11.5px] mt-0.5">{formatUtc(event.timestamp)}</dd></div>
+          <div>
+            <dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">INDICATOR TYPE</dt>
+            <Value>{event.indicatorType}</Value>
+          </div>
+          <div>
+            <dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">EVENT CATEGORY</dt>
+            <Value>{event.type}</Value>
+          </div>
+          <div>
+            <dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">EVENT TIME (UTC)</dt>
+            <Value>{formatUtc(event.timestamp)}</Value>
+          </div>
+          <div>
+            <dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">INGESTED (UTC)</dt>
+            <Value>{formatUtc(event.ingestedAt)}</Value>
+          </div>
           <div>
             <dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">CONFIDENCE</dt>
             <dd className="mt-1">
@@ -85,9 +105,18 @@ export default function EventInspector({ event, onPrev, onNext, position }: Prop
               )}
             </dd>
           </div>
-          <div><dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">ASN</dt><dd className="font-mono text-[11.5px] mt-0.5">{event.asn ?? '—'}</dd></div>
-          <div><dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">PORT / PROTO</dt><dd className="font-mono text-[11.5px] mt-0.5">{event.port ? `${event.port} · ${event.protocol}` : (event.protocol ?? '—')}</dd></div>
+          <div>
+            <dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">DATA ORIGIN</dt>
+            <Value>{DATA_ORIGIN_LABELS[event.dataOrigin] ?? event.dataOrigin}</Value>
+          </div>
+          <div><dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">ASN</dt><Value>{event.asn ?? 'Not reported'}</Value></div>
+          <div><dt className="font-mono text-[10px] tracking-[0.12em] text-secondary">PORT / PROTO</dt><Value>{event.port ? `${event.port} · ${event.protocol}` : (event.protocol ?? 'Not reported')}</Value></div>
         </dl>
+
+        <div className="rounded border border-border bg-elevated/50 px-2.5 py-2 text-[12px]">
+          <div className="font-mono text-[10px] tracking-[0.12em] text-secondary">VERIFICATION</div>
+          <p className="mt-1 text-[12px] leading-relaxed">{VERIFICATION_LABELS[event.verificationStatus] ?? event.verificationStatus}</p>
+        </div>
 
         <div className="space-y-1.5">
           <div className="font-mono text-[10px] tracking-[0.12em] text-secondary">GEOGRAPHY (SIMULATED)</div>
@@ -101,7 +130,9 @@ export default function EventInspector({ event, onPrev, onNext, position }: Prop
                 <span>
                   <span className="font-mono text-[10px] text-secondary mr-1.5">{k}</span>
                   {g.label}
-                  <span className="ml-2 rounded border border-border px-1 py-px font-mono text-[10px] text-secondary">loc: {g.locationSource}</span>
+                  <span className="block font-mono text-[10.5px] text-secondary mt-0.5 tabular-nums">
+                    {Number.isFinite(g.lat) && Number.isFinite(g.lon) ? `${g.lat.toFixed(2)}, ${g.lon.toFixed(2)} · ` : ''}provenance: {g.locationSource ?? 'unknown'}
+                  </span>
                 </span>
               ) : (
                 <span className="text-secondary"><span className="font-mono text-[10px] mr-1.5">{k}</span>Not reported — no arc inferred</span>
@@ -115,15 +146,24 @@ export default function EventInspector({ event, onPrev, onNext, position }: Prop
           <dl className="rounded border border-border divide-y divide-border/60 text-[12px]">
             {[
               ['Reporter', event.provenance.reporter],
+              ['Source', `${src.name} · rel ${src.reliability} · ${src.trustScore}/100`],
+              ['Source ref', event.sourceUrl ?? src.url ?? 'Not provided by source'],
               ['Method', event.provenance.collectionMethod],
               ['First seen', formatUtc(event.provenance.firstSeen)],
               ['Last seen', formatUtc(event.provenance.lastSeen)],
               ['Reference', event.provenance.reference],
-              ['Source trust', `${src.name} · rel ${src.reliability} · ${src.trustScore}/100`],
             ].map(([k, v]) => (
               <div key={k} className="flex gap-2 px-2.5 py-1.5">
                 <dt className="w-24 shrink-0 text-secondary">{k}</dt>
-                <dd className="font-mono text-[11px] break-all">{v}</dd>
+                <dd className="font-mono text-[11px] break-all">
+                  {k === 'Source ref' && (event.sourceUrl ?? src.url) ? (
+                    <a href={event.sourceUrl ?? src.url ?? '#'} target="_blank" rel="noreferrer" className="text-phosphor underline underline-offset-2 break-all">
+                      {v}
+                    </a>
+                  ) : (
+                    v
+                  )}
+                </dd>
               </div>
             ))}
           </dl>
@@ -137,7 +177,7 @@ export default function EventInspector({ event, onPrev, onNext, position }: Prop
 
         <p className="flex gap-1.5 items-start rounded border border-amber/30 bg-amber/[0.06] px-2.5 py-2 text-[11px] leading-relaxed text-amber/90">
           <AlertTriangle size={13} className="mt-px shrink-0" />
-          Simulated exercise record. Not a real attack, and no route is inferred from addresses alone.
+          Reported indicator only — not a confirmed attack. Simulated exercise record; no route is inferred from addresses alone.
         </p>
       </div>
     </section>
