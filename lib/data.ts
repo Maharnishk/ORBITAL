@@ -29,11 +29,11 @@ function mulberry32(seed: number) {
 }
 
 export const SOURCES: ThreatSource[] = [
-  { id: 'meridian-honeynet', name: 'Meridian Honeynet', kind: 'honeypot', reliability: 'A', trustScore: 92 },
-  { id: 'backbone-netflow', name: 'Backbone NetFlow Agg.', kind: 'netflow', reliability: 'B', trustScore: 84 },
-  { id: 'openphish-collective', name: 'OpenPhish Collective', kind: 'osint', reliability: 'C', trustScore: 71 },
-  { id: 'sandbox-queue', name: 'Sandbox Detonation Q.', kind: 'sandbox', reliability: 'A', trustScore: 95 },
-  { id: 'community-blocklist', name: 'Community Blocklist', kind: 'community', reliability: 'D', trustScore: 58 },
+  { id: 'meridian-honeynet', name: 'Meridian Honeynet', kind: 'honeypot', reliability: 'A', trustScore: 92, url: null },
+  { id: 'backbone-netflow', name: 'Backbone NetFlow Agg.', kind: 'netflow', reliability: 'B', trustScore: 84, url: null },
+  { id: 'openphish-collective', name: 'OpenPhish Collective', kind: 'osint', reliability: 'C', trustScore: 71, url: null },
+  { id: 'sandbox-queue', name: 'Sandbox Detonation Q.', kind: 'sandbox', reliability: 'A', trustScore: 95, url: null },
+  { id: 'community-blocklist', name: 'Community Blocklist', kind: 'community', reliability: 'D', trustScore: 58, url: null },
 ];
 
 // Fictional sensor / target sites. Coordinates are intentionally offset
@@ -134,6 +134,8 @@ export function buildEvents(): ThreatEvent[] {
     const port = type === 'scanning' || type === 'brute-force' ? [22, 23, 80, 443, 3389][Math.floor(rand() * 5)] : portRoll > 0.6 ? 443 : null;
 
     const id = `EVT-${String(1042 + i).padStart(4, '0')}`;
+    // Ingestion lags observation by a few minutes (simulated pipeline delay).
+    const ingestedAt = new Date(ts.getTime() + (2 + Math.floor(rand() * 9)) * 60_000).toISOString();
     events.push({
       id,
       title,
@@ -143,7 +145,11 @@ export function buildEvents(): ThreatEvent[] {
       severity,
       type,
       sourceId: source.id,
+      // No upstream reference URL is provided by the synthetic generators;
+      // represent as null rather than inventing one.
+      sourceUrl: null,
       timestamp: ts.toISOString(),
+      ingestedAt,
       confidence,
       srcGeo,
       dstGeo,
@@ -158,6 +164,8 @@ export function buildEvents(): ThreatEvent[] {
         lastSeen: ts.toISOString(),
         reference: `SIM-${source.id.toUpperCase().slice(0, 4)}-${id}`,
       },
+      dataOrigin: 'simulation',
+      verificationStatus: 'unverified',
     });
   }
 
