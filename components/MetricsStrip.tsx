@@ -18,17 +18,17 @@ export default function MetricsStrip({ events, timeLabel }: Props) {
     ['UNIQUE INDICATORS', String(m.uniqueIndicators), 'distinct indicator values'],
     ['HIGH / CRITICAL', String(m.highCritical), `crit ${m.bySeverity.critical} · high ${m.bySeverity.high}`],
     ['SOURCES IN VIEW', String(sourcesInView), Object.entries(m.bySource).map(([k, v]) => `${k}:${v}`).join(' · ') || 'none'],
-    ['PAIRED FLOWS', String(m.pairedFlows), `${m.singlePoint} single-point · ${m.noGeo} no geo`],
+    ['PAIRED LOCATIONS', String(m.pairedLocations), `${m.singlePoint} single-point · ${m.noGeo} no reported geo`],
     ['LATEST SIGNAL', latest, m.latestAt ?? 'no events'],
   ];
 
   return (
     <div aria-label="Summary metrics derived from the current filter selection" className="border-y border-border bg-panel">
-      <div className="flex items-stretch divide-x divide-border overflow-x-auto">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-px bg-border">
         {items.map(([k, v, title]) => (
-          <div key={k} className="flex-1 min-w-[140px] px-4 py-2.5" title={title}>
+          <div key={k} className="min-w-0 bg-panel px-4 py-2.5" title={title}>
             <div className="text-[10px] font-mono tracking-[0.16em] text-secondary">{k}</div>
-            <div className="text-[15px] font-semibold tabular-nums mt-0.5">{v}</div>
+            <div className="text-[15px] font-semibold tabular-nums mt-0.5 truncate">{v}</div>
           </div>
         ))}
       </div>

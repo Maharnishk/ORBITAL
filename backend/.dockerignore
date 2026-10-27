@@ -1,0 +1,25 @@
+# Build context excludes for the API image.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Tests are run on the host (pytest + httpx live in requirements-dev.txt,
+# which is not installed in the image).
+app/tests/
+
+# Local databases and environment files.
+*.db
+*.sqlite3
+.env
+.env.*
+
+# Editor / OS noise.
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db

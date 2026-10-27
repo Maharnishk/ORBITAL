@@ -12,7 +12,7 @@ interface Props {
 
 /** Compact histogram derived from real event timestamps (UTC). Clicking a bar selects its newest event. */
 export default function Timeline({ events, filters, anchor, onPick }: Props) {
-  const { start, end } = useMemo(() => timelineWindow(filters, anchor), [filters, anchor]);
+  const { start, end } = useMemo(() => timelineWindow(filters, anchor, events), [filters, anchor, events]);
 
   const buckets = useMemo(() => {
     const spanHours = Math.max(1, (end - start) / 3600_000);
@@ -43,7 +43,7 @@ export default function Timeline({ events, filters, anchor, onPick }: Props) {
               disabled={b.count === 0}
               onClick={() => b.latestId && onPick(b.latestId)}
               title={`${new Date(b.start).toISOString().slice(0, 16).replace('T', ' ')} UTC → ${new Date(b.end).toISOString().slice(0, 16).replace('T', ' ')} UTC — ${b.count} events (${b.crit} high/critical)`}
-              aria-label={`Bucket ${i + 1}: ${b.count} events`}
+              aria-label={`Bucket ${i + 1}, ${new Date(b.start).toISOString().slice(11, 16)} to ${new Date(b.end).toISOString().slice(11, 16)} UTC: ${b.count} events, ${b.crit} high or critical`}
               className="focus-ring flex-1 rounded-sm min-w-[3px] transition-opacity disabled:opacity-30"
               style={{
                 height: `${Math.max(6, (b.count / max) * 100)}%`,

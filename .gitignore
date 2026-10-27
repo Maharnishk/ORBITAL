@@ -5,3 +5,22 @@ out/
 .DS_Store
 
 tsconfig.tsbuildinfo
+
+# Environment files: commit only the example template.
+.env
+.env.*
+!.env.example
+
+# Python / backend
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite3
+*.egg-info/
+
+# Docker build artifacts
+.docker/

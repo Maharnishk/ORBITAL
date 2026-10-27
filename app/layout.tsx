@@ -8,7 +8,7 @@ const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' });
 export const metadata: Metadata = {
   title: 'ORBITAL — Map the signals. Understand the threat.',
   description:
-    'ORBITAL is a network threat-intelligence visualization platform. Simulation build with deterministic synthetic data.',
+    'ORBITAL is a threat-intelligence visualization dashboard. Reported indicators are plotted only where coordinates exist; sources, timestamps, verification, and data origin stay visible.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

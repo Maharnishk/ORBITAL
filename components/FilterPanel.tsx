@@ -1,6 +1,5 @@
 'use client';
-import { SOURCES } from '@/lib/data';
-import type { EventType, FilterState, Severity, TimeRangeKey } from '@/lib/types';
+import type { EventType, FilterState, Severity, ThreatSource, TimeRangeKey } from '@/lib/types';
 import { EVENT_TYPES, SEVERITIES, SEVERITY_LABELS, TIME_RANGES } from '@/lib/types';
 import { activeFilterCount } from '@/lib/utils';
 import { RotateCcw, Search, X } from 'lucide-react';
@@ -10,6 +9,7 @@ interface Props {
   onChange: (f: FilterState) => void;
   resultCount: number;
   anchor: number;
+  sources: ThreatSource[];
 }
 
 function toggle<T>(set: Set<T>, v: T): Set<T> {
@@ -33,10 +33,10 @@ function fromLocalInput(v: string): string | null {
   return Number.isNaN(+d) ? null : d.toISOString();
 }
 
-export const DEFAULT_FILTERS = (): FilterState => ({
+export const DEFAULT_FILTERS = (sources: ThreatSource[]): FilterState => ({
   severities: new Set(SEVERITIES),
   types: new Set(EVENT_TYPES.map((t) => t.key)),
-  sources: new Set(SOURCES.map((s) => s.id)),
+  sources: new Set(sources.map((s) => s.id)),
   timeRange: '7d',
   customStart: null,
   customEnd: null,
@@ -53,13 +53,13 @@ export const EMPTY_FILTERS = (): FilterState => ({
   query: '',
 });
 
-export default function FilterPanel({ filters, onChange, resultCount, anchor }: Props) {
+export default function FilterPanel({ filters, onChange, resultCount, anchor, sources }: Props) {
   const set = (p: Partial<FilterState>) => onChange({ ...filters, ...p });
   const allSev = filters.severities.size === SEVERITIES.length;
   const active = activeFilterCount(filters, {
     severities: SEVERITIES.length,
     types: EVENT_TYPES.length,
-    sources: SOURCES.length,
+    sources: sources.length,
   });
   const customError =
     filters.timeRange === 'custom' &&
@@ -71,43 +71,44 @@ export default function FilterPanel({ filters, onChange, resultCount, anchor }: 
 
   return (
     <section aria-label="Event filters" className="rounded-lg border border-border bg-panel">
-      <div className="px-3.5 pt-3 pb-2 flex items-center justify-between gap-2">
-        <h2 className="text-[11px] font-mono tracking-[0.18em] text-secondary">
-          FILTERS{active > 0 ? <span className="text-phosphor"> · {active} active</span> : ''}
+      <div className="px-3.5 pt-3 pb-2 flex items-center gap-2">
+        <h2 className="text-[11px] font-mono tracking-[0.18em] text-secondary shrink-0">
+          FILTERS{active > 0 ? <span className="text-phosphor"> · {active}</span> : ''}
         </h2>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-mono text-secondary tabular-nums" aria-live="polite">
-            {resultCount} match
-          </span>
-          <button
-            onClick={() => onChange(EMPTY_FILTERS())}
-            title="Clear every facet and the search query (shows empty result set)"
-            className="focus-ring inline-flex items-center gap-1 text-[11px] font-mono text-secondary hover:text-primary border border-border rounded px-1.5 py-1"
-          >
-            <X size={12} /> Clear
-          </button>
-          <button
-            onClick={() => onChange(DEFAULT_FILTERS())}
-            title="Reset to default view (all severities, types, sources; last 7 days)"
-            className="focus-ring inline-flex items-center gap-1 text-[11px] font-mono text-secondary hover:text-primary border border-border rounded px-1.5 py-1"
-          >
-            <RotateCcw size={12} /> Reset
-          </button>
-        </div>
+        <span className="ml-auto text-[11px] font-mono text-secondary tabular-nums whitespace-nowrap" aria-live="polite">
+          {resultCount} {resultCount === 1 ? 'match' : 'matches'}
+        </span>
+        <button
+          onClick={() => onChange(DEFAULT_FILTERS(sources))}
+          title="Reset to default view (all severities, types, sources; last 7 days)"
+          aria-label="Reset all filters to the default view"
+          className="focus-ring inline-flex items-center justify-center rounded border border-border p-1 text-secondary hover:text-primary"
+        >
+          <RotateCcw size={12} />
+        </button>
       </div>
 
       <div className="px-3.5 pb-3">
         <label className="relative block">
-          <span className="sr-only">Search indicators, event types, sources, titles, IDs</span>
-          <Search size={13} className="absolute left-2.5 top-2.5 text-secondary" />
+          <span className="sr-only">Search indicators, event types, sources, titles, IDs, references</span>
+          <Search size={13} className="absolute left-2.5 top-2.5 text-secondary" aria-hidden />
           <input
             value={filters.query}
             onChange={(e) => set({ query: e.target.value })}
             placeholder="Search indicator, type, source…"
-            className="focus-ring w-full bg-elevated border border-border rounded-md pl-8 pr-2 py-2 text-[12.5px] placeholder:text-secondary/70"
+            className="focus-ring w-full bg-elevated border border-border rounded-md pl-8 pr-8 py-2 text-[12.5px] placeholder:text-secondary"
           />
+          {filters.query && (
+            <button
+              onClick={() => set({ query: '' })}
+              aria-label="Clear search query"
+              className="focus-ring absolute right-1.5 top-1.5 rounded p-1 text-secondary hover:text-primary"
+            >
+              <X size={13} />
+            </button>
+          )}
         </label>
-        <p className="mt-1 text-[10.5px] font-mono text-secondary/80">Matches indicator · type · source · title · ID</p>
+        <p className="mt-1 text-[10.5px] font-mono text-secondary">Matches indicator · ID · title · type · source · reference</p>
       </div>
 
       <div className="px-3.5 pb-3">
@@ -135,7 +136,7 @@ export default function FilterPanel({ filters, onChange, resultCount, anchor }: 
               <input
                 type="datetime-local"
                 value={toLocalInput(filters.customStart)}
-                max={toLocalInput(new Date(anchor).toISOString())}
+                max={toLocalInput(filters.customEnd ?? new Date(anchor).toISOString())}
                 onChange={(e) => set({ customStart: fromLocalInput(e.target.value) })}
                 className="focus-ring mt-0.5 w-full rounded border border-border bg-panel px-1.5 py-1 font-mono text-[11.5px]"
               />
@@ -145,6 +146,7 @@ export default function FilterPanel({ filters, onChange, resultCount, anchor }: 
               <input
                 type="datetime-local"
                 value={toLocalInput(filters.customEnd)}
+                min={toLocalInput(filters.customStart)}
                 max={toLocalInput(new Date(anchor).toISOString())}
                 onChange={(e) => set({ customEnd: fromLocalInput(e.target.value) })}
                 className="focus-ring mt-0.5 w-full rounded border border-border bg-panel px-1.5 py-1 font-mono text-[11.5px]"
@@ -153,7 +155,7 @@ export default function FilterPanel({ filters, onChange, resultCount, anchor }: 
             {customError ? (
               <p role="alert" className="text-[11px] text-coral">{customError}</p>
             ) : (
-              <p className="text-[10.5px] font-mono text-secondary/80">Leave a bound empty for open-ended.</p>
+              <p className="text-[10.5px] font-mono text-secondary">Leave a bound empty for open-ended.</p>
             )}
           </div>
         )}
@@ -231,36 +233,40 @@ export default function FilterPanel({ filters, onChange, resultCount, anchor }: 
           <button
             onClick={() =>
               set({
-                sources: filters.sources.size === SOURCES.length ? new Set<string>() : new Set(SOURCES.map((s) => s.id)),
+                sources: filters.sources.size === sources.length ? new Set<string>() : new Set(sources.map((s) => s.id)),
               })
             }
             className="focus-ring text-[10px] font-mono text-secondary hover:text-primary"
           >
-            {filters.sources.size === SOURCES.length ? 'Clear' : 'All'}
+            {filters.sources.size === sources.length ? 'Clear' : 'All'}
           </button>
         </div>
         <div className="space-y-1" role="group" aria-label="Source">
-          {SOURCES.map((s) => {
+          {sources.map((s) => {
             const on = filters.sources.has(s.id);
             return (
               <button
                 key={s.id}
                 onClick={() => set({ sources: toggle(filters.sources, s.id) })}
                 aria-pressed={on}
+                title={`${on ? 'Included' : 'Excluded'} · source-reported trust ${s.trustScore == null ? 'not provided' : `${s.trustScore}/100`} · reliability ${s.reliability ?? 'not provided'}`}
                 className={`focus-ring w-full flex items-center gap-2 rounded border px-2 py-1.5 text-left text-[11.5px] ${
-                  on ? 'border-border bg-elevated text-primary' : 'border-border/60 bg-transparent text-secondary opacity-60'
+                  on ? 'border-border bg-elevated text-primary' : 'border-border/70 bg-transparent text-secondary'
                 }`}
               >
                 <span
                   className={`w-1.5 h-1.5 rounded-full shrink-0 ${on ? 'bg-phosphor' : 'bg-border'}`}
                   aria-hidden
                 />
-                <span className="truncate">{s.name}</span>
-                <span className="ml-auto font-mono text-[10px] text-secondary">{s.trustScore}</span>
+                <span className="min-w-0 truncate">{s.name}</span>
+                <span className="ml-auto shrink-0 font-mono text-[10px] text-secondary tabular-nums" title="Source-reported trust score, not an ORBITAL assessment">
+                  {s.trustScore == null ? 'trust —' : `trust ${s.trustScore}`}
+                </span>
               </button>
             );
           })}
         </div>
+        <p className="mt-1.5 text-[10.5px] font-mono text-secondary">Trust and reliability values are source-reported.</p>
       </div>
     </section>
   );

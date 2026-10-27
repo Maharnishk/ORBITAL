@@ -1,0 +1,108 @@
+# ORBITAL local development stack.
+#
+# Default (PostgreSQL + API, API waits for a healthy database):
+#   copy .env.example .env
+#   docker compose up -d --build db api
+#   curl http://localhost:8000/health
+#
+# Optional dashboard container (development server, hot reload):
+#   docker compose --profile frontend up -d
+#
+# This file is for developer workstations only: the API service waits for a
+# healthy database, then its startup command runs `alembic upgrade head` and
+# loads the deterministic simulation seed before starting uvicorn. The API
+# image itself never migrates or seeds. Set SEED_SIMULATION=0 in .env to start
+# with an empty database.
+#
+# Migrations manually:
+#   docker compose run --rm api alembic upgrade head
+#   docker compose run --rm api alembic downgrade -1
+#
+# Seeding manually (idempotent upsert by event_id):
+#   docker compose run --rm api python -m app.seed --count 72
+#   docker compose run --rm api python -m app.seed --reset
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orbital}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orbital_dev_only}
+      POSTGRES_DB: ${POSTGRES_DB:-orbital}
+    # Loopback only: the database is not exposed to the local network.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - orbital_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Inside the compose network the database host is the `db` service.
+      # This deliberately overrides a host-oriented DATABASE_URL from .env.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-orbital}:${POSTGRES_PASSWORD:-orbital_dev_only}@db:5432/${POSTGRES_DB:-orbital}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      SEED_SIMULATION: ${SEED_SIMULATION:-1}
+      SEED_COUNT: ${SEED_COUNT:-72}
+    # Development startup only. `docker compose run --rm api <command>`
+    # replaces this command, so manual alembic/seed commands have no hidden
+    # side effects.
+    command:
+      - sh
+      - -c
+      - 'alembic upgrade head && if [ "$${SEED_SIMULATION:-1}" = "1" ]; then python -m app.seed --count "$${SEED_COUNT:-72}"; fi && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-access-log'
+    # Loopback only; the dashboard runs in the browser on the host.
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # Optional development server for the Next.js dashboard. Hot reload uses
+  # polling because file events from Windows bind mounts are unreliable.
+  # The browser reaches the API through the host-published port, so
+  # NEXT_PUBLIC_API_BASE_URL must be a host URL (not http://api:8000).
+  frontend:
+    profiles: ["frontend"]
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- -H 0.0.0.0"
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./:/app
+      - orbital_node_modules:/app/node_modules
+
+volumes:
+  orbital_pgdata:
+    name: orbital_pgdata
+  orbital_node_modules:
+    name: orbital_node_modules

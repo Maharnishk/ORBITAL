@@ -30,18 +30,18 @@ export interface ThreatSource {
   id: string;
   name: string;
   kind: 'honeypot' | 'netflow' | 'osint' | 'sandbox' | 'community';
-  reliability: string;
-  trustScore: number;
+  reliability: string | null;
+  trustScore: number | null;
   url: string | null;
   eventCount?: number;
 }
 
 export interface Provenance {
-  reporter: string;
-  collectionMethod: string;
-  firstSeen: string;
-  lastSeen: string;
-  reference: string;
+  reporter: string | null;
+  collectionMethod: string | null;
+  firstSeen: string | null;
+  lastSeen: string | null;
+  reference: string | null;
 }
 
 export interface ThreatEvent {
@@ -98,7 +98,7 @@ export const SEVERITY_LABELS: Record<Severity, string> = {
 };
 
 export const DATA_ORIGIN_LABELS: Record<DataOrigin, string> = {
-  simulation: 'Simulation (synthetic exercise data)',
+  simulation: 'Simulation',
   'public-intel': 'Public threat intelligence',
   observed: 'Observed telemetry',
 };

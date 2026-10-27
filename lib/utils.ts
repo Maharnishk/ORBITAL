@@ -1,6 +1,5 @@
-import type { FilterState, GeoPoint, Severity, ThreatEvent } from './types';
+import type { FilterState, GeoPoint, Severity, ThreatEvent, ThreatSource } from './types';
 import { EVENT_TYPES, TIME_RANGES } from './types';
-import { SOURCES, sourceById } from './data';
 
 /** Resolve event timestamp cutoff (ms) for the active time filter. Null = unbounded. */
 export function filterCutoff(f: FilterState, now = Date.now()): { start: number | null; end: number | null } {
@@ -17,25 +16,41 @@ export function filterCutoff(f: FilterState, now = Date.now()): { start: number 
   return { start: null, end: null };
 }
 
-export function applyFilters(events: ThreatEvent[], f: FilterState, now = Date.now()): ThreatEvent[] {
+export function applyFilters(
+  events: ThreatEvent[],
+  f: FilterState,
+  now = Date.now(),
+  sources: ThreatSource[] = []
+): ThreatEvent[] {
   const { start, end } = filterCutoff(f, now);
   const q = f.query.trim().toLowerCase();
+  const sourceNames = new Map(sources.map((s) => [s.id, s.name.toLowerCase()]));
   return events.filter((e) => {
     if (!f.severities.has(e.severity)) return false;
     if (!f.types.has(e.type)) return false;
     if (!f.sources.has(e.sourceId)) return false;
     const t = +new Date(e.timestamp);
+    if (!Number.isFinite(t)) return false;
     if (start != null && t < start) return false;
     if (end != null && t > end) return false;
     if (q) {
       const typeLabel = EVENT_TYPES.find((x) => x.key === e.type)?.label.toLowerCase() ?? e.type;
-      let sourceName = '';
-      try {
-        sourceName = sourceById(e.sourceId).name.toLowerCase();
-      } catch {
-        sourceName = e.sourceId.toLowerCase();
-      }
-      const hay = `${e.indicator} ${e.id} ${e.title} ${e.type} ${typeLabel} ${sourceName} ${e.sourceId}`.toLowerCase();
+      const sourceName = sourceNames.get(e.sourceId) ?? e.sourceId.toLowerCase();
+      // Mirrors the API search fields: indicator, event ID, title, description,
+      // category, source name/id, and source reference. Rendered as plain text.
+      const hay = [
+        e.indicator,
+        e.id,
+        e.title,
+        e.description,
+        e.type,
+        typeLabel,
+        e.sourceId,
+        sourceName,
+        e.provenance.reference ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -52,8 +67,7 @@ export function timeWindowLabel(f: FilterState, anchor = Date.now()): string {
   const range = TIME_RANGES.find((r) => r.key === f.timeRange);
   if (!range) return 'Unknown window';
   if (range.hours == null) return 'All available data (UTC)';
-  if (f.timeRange === 'all') return 'All available data (UTC)';
-  return `Last ${range.label} to ${new Date(anchor).toISOString().slice(11, 16)} UTC`;
+  return `Last ${range.label} · as of ${new Date(anchor).toISOString().slice(11, 16)} UTC`;
 }
 
 export interface DashboardMetrics {
@@ -62,7 +76,7 @@ export interface DashboardMetrics {
   bySeverity: Record<Severity, number>;
   bySource: Record<string, number>;
   highCritical: number;
-  pairedFlows: number;
+  pairedLocations: number;
   singlePoint: number;
   noGeo: number;
   latestAt: string | null;
@@ -73,7 +87,7 @@ export function computeMetrics(events: ThreatEvent[]): DashboardMetrics {
   const bySeverity: Record<Severity, number> = { info: 0, low: 0, medium: 0, high: 0, critical: 0 };
   const bySource: Record<string, number> = {};
   const indicators = new Set<string>();
-  let pairedFlows = 0;
+  let pairedLocations = 0;
   let singlePoint = 0;
   let noGeo = 0;
   let latestAt: string | null = null;
@@ -83,9 +97,9 @@ export function computeMetrics(events: ThreatEvent[]): DashboardMetrics {
     bySeverity[e.severity] += 1;
     bySource[e.sourceId] = (bySource[e.sourceId] ?? 0) + 1;
     indicators.add(e.indicator);
-    const hasSrc = e.srcGeo != null && isValidGeo(e.srcGeo);
-    const hasDst = e.dstGeo != null && isValidGeo(e.dstGeo);
-    if (hasSrc && hasDst) pairedFlows += 1;
+    const hasSrc = isValidGeo(e.srcGeo);
+    const hasDst = isValidGeo(e.dstGeo);
+    if (hasSrc && hasDst) pairedLocations += 1;
     else if (hasSrc || hasDst) singlePoint += 1;
     else noGeo += 1;
     const t = +new Date(e.timestamp);
@@ -101,7 +115,7 @@ export function computeMetrics(events: ThreatEvent[]): DashboardMetrics {
     bySeverity,
     bySource,
     highCritical: bySeverity.high + bySeverity.critical,
-    pairedFlows,
+    pairedLocations,
     singlePoint,
     noGeo,
     latestAt,
@@ -133,6 +147,11 @@ export function plottableGeo(e: ThreatEvent): GeoPoint | null {
   if (isValidGeo(e.dstGeo)) return e.dstGeo;
   if (isValidGeo(e.srcGeo)) return e.srcGeo;
   return null;
+}
+
+/** True only when both endpoints carry valid reported coordinates. */
+export function hasValidEndpoints(e: ThreatEvent): boolean {
+  return isValidGeo(e.srcGeo) && isValidGeo(e.dstGeo);
 }
 
 export interface TimelineBucket {
@@ -183,22 +202,46 @@ export function bucketTimeline(
   return buckets;
 }
 
-/** Resolve timeline window [start, end] in ms for the active filter + anchor. */
-export function timelineWindow(f: FilterState, anchor: number, fallbackSpanHours = 168): { start: number; end: number } {
-  const { start, end } = filterCutoff(f, anchor);
+/**
+ * Resolve timeline window [start, end] in ms for the active filter + anchor.
+ * The "All" range uses the actual timestamp extent of the supplied events
+ * (plus a small margin) instead of pretending the last seven days is everything.
+ */
+export function timelineWindow(
+  f: FilterState,
+  anchor: number,
+  events: ThreatEvent[] = [],
+  fallbackSpanHours = 168
+): { start: number; end: number } {
   if (f.timeRange === 'custom') {
+    const { start, end } = filterCutoff(f, anchor);
     const s = start ?? anchor - fallbackSpanHours * 3600_000;
     const e = end ?? anchor;
     if (e <= s) return { start: anchor - fallbackSpanHours * 3600_000, end: anchor };
     return { start: s, end: e };
   }
-  if (start != null) return { start, end: anchor };
-  // 'all': use data extent when available, else fallback span.
-  return { start: anchor - fallbackSpanHours * 3600_000, end: anchor };
-}
 
-export function allSourceIds(): string[] {
-  return SOURCES.map((s) => s.id);
+  if (f.timeRange === 'all') {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const e of events) {
+      const t = +new Date(e.timestamp);
+      if (Number.isFinite(t)) {
+        if (t < min) min = t;
+        if (t > max) max = t;
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return { start: anchor - fallbackSpanHours * 3600_000, end: anchor };
+    }
+    const span = Math.max(0, max - min);
+    const margin = Math.max(15 * 60_000, Math.min(6 * 3600_000, span * 0.02));
+    return { start: min - margin, end: max + margin };
+  }
+
+  const { start } = filterCutoff(f, anchor);
+  if (start != null) return { start, end: anchor };
+  return { start: anchor - fallbackSpanHours * 3600_000, end: anchor };
 }
 
 export function latLonToVec3(lat: number, lon: number, radius: number): [number, number, number] {
@@ -217,9 +260,35 @@ export function formatUtc(iso: string): string {
 }
 
 export function timeAgo(iso: string, now = Date.now()): string {
-  const s = Math.max(1, Math.floor((now - +new Date(iso)) / 1000));
+  const t = +new Date(iso);
+  if (!Number.isFinite(t)) return 'Unknown time';
+  const deltaMs = now - t;
+  if (deltaMs < 0) {
+    const s = Math.max(1, Math.ceil(-deltaMs / 1000));
+    if (s < 60) return `in ${s}s`;
+    if (s < 3600) return `in ${Math.floor(s / 60)}m`;
+    if (s < 86400) return `in ${Math.floor(s / 3600)}h`;
+    return `in ${Math.floor(s / 86400)}d`;
+  }
+  const s = Math.max(1, Math.floor(deltaMs / 1000));
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
+}
+
+/**
+ * Return an absolute http(s) URL or null. The API normalizes source URLs on
+ * ingestion, but the browser must never trust a stored value enough to render
+ * javascript:/data: links if a database row was written outside that path.
+ */
+export function safeExternalUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
