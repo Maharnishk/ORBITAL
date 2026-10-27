@@ -5,6 +5,11 @@ Fiber frontend renders normalized, provenance-preserving events on an interactiv
 globe, with a filterable event stream, inspector, timeline, and data-derived
 metrics. A FastAPI + SQLAlchemy service serves the data from PostgreSQL.
 
+![ORBITAL dashboard showing the threat globe, filter panel, event stream, inspector, metrics, and activity timeline](docs/orbital-dashboard.png)
+
+*Dashboard against the deterministic simulation seed, shown in the default
+last-7-days window (52 of 72 events in range). No external feeds are connected.*
+
 The current revision is the **Phase 06 engineering and QA pass**: the interface
 keeps its graphite-black / phosphor-green identity while removing generic
 dashboard decoration, tightening data-integrity and security behavior, and
@@ -15,6 +20,16 @@ verifying the loading, empty, error, reduced-motion, mobile, and no-WebGL states
 > authentication, and no automatic IP geolocation. The only bundled data is an
 > explicit deterministic **simulation** seed. Public-intel and observed records
 > are supported by the schema, but none are shipped in this repository.
+
+## Contents
+
+[Architecture](#architecture-and-data-flow) · [Data integrity](#data-integrity-rules) ·
+[Interface](#interface-and-design) · [Stack](#stack) · [Layout](#repository-layout) ·
+[Quick start](#quick-start--docker-compose) · [Host setup](#quick-start--host-processes) ·
+[API](#api) · [Seed](#simulation-seed) · [Migrations](#migrations) ·
+[Configuration](#configuration) · [Security](#security-controls) · [Tests](#tests-and-checks) ·
+[Verification](#verification-status-2026-10-27) · [Limitations](#limitations-and-not-in-scope) ·
+[Troubleshooting](#troubleshooting) · [Manual checklist](#manual-verification-checklist)
 
 ## Architecture and data flow
 
@@ -139,6 +154,25 @@ docker-compose.yml                PostgreSQL + API (+ optional frontend profile)
 .env.example                      documented environment template
 ```
 
+## Prerequisites
+
+* **Node.js 22.12+** and npm (enforced by `package.json` engines).
+* **Python 3.12+** for running the API on the host (the API image uses
+  `python:3.12-slim`).
+* **Docker Desktop / Docker Engine with Compose v2** — optional, for the
+  PostgreSQL stack.
+* A modern browser with WebGL for the globe. The stream, inspector, filters,
+  and timeline remain usable when WebGL is unavailable.
+
+### Get the code
+
+```powershell
+git clone https://github.com/Maharnishk/ORBITAL.git
+cd ORBITAL
+```
+
+Unless noted, run commands from the repository root.
+
 ## Quick start — Docker Compose
 
 Requires Docker Desktop / Docker Engine with Compose v2.
@@ -231,6 +265,23 @@ The frontend reads `NEXT_PUBLIC_API_BASE_URL` (default
 `http://localhost:8000`). It is baked into the production build, so rebuild
 after changing it. The page shows explicit loading, empty, timeout, network,
 and server-error states; it never substitutes synthetic data.
+
+### Production build
+
+Build and serve the dashboard from the repository root:
+
+```powershell
+npm ci
+npm run build
+npm start
+# http://localhost:3000
+```
+
+For production, set `ENVIRONMENT=production` on the API, apply migrations
+explicitly (`alembic upgrade head`), do not run the simulation seed (the CLI
+refuses production without `--force`), and restrict `CORS_ORIGINS` to the
+deployed dashboard origin. Terminate TLS at a reverse proxy; Next.js and
+uvicorn both serve plain HTTP.
 
 ## API
 
@@ -458,6 +509,17 @@ Verified locally:
 * No source liveness/staleness feed poller. Source-level trust and provenance
   are displayed as reported, not independently validated.
 * No CI configuration is included; the commands above are the expected gate.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| “Could not reach the ORBITAL API” | Confirm `curl http://localhost:8000/health` succeeds, `NEXT_PUBLIC_API_BASE_URL` points at the browser-visible API, and the dashboard origin is listed in `CORS_ORIGINS`. Rebuild after changing a `NEXT_PUBLIC_*` value. |
+| Health returns `503` / `database_unavailable` | Start PostgreSQL and verify `DATABASE_URL`; Compose waits for the database healthcheck before starting the API. |
+| “API CONNECTED · NO EVENTS” | The API is reachable but the table is empty. Run `alembic upgrade head` and `python -m app.seed` from `backend/`, or clear the active filters. No data is fabricated. |
+| `relation "..." does not exist` | Migrations have not been applied: run `alembic upgrade head` with the same `DATABASE_URL` as the API. |
+| Port 3000 or 8000 already in use | Stop the previous process, or run uvicorn with `--port <n>` and update `NEXT_PUBLIC_API_BASE_URL` before rebuilding. |
+| Globe reports “WebGL is unavailable” | Expected fallback. Enable browser hardware acceleration or use a WebGL-capable browser; the stream, inspector, filters, and timeline still work. |
 
 ## Manual verification checklist
 
